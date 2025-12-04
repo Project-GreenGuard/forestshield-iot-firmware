@@ -31,25 +31,21 @@
 #include <ArduinoJson.h>
 #include <DHT.h>
 #include <time.h>
+#include "config.h"  // Configuration file (not committed to git)
 
 // DHT11 Sensor Configuration
 #define DHTPIN 14         // GPIO pin connected to DHT11 DATA pin
 #define DHTTYPE DHT11     // DHT11 sensor type
 DHT dht(DHTPIN, DHTTYPE);
 
-// WiFi credentials - REPLACE WITH YOUR NETWORK INFO
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
-
-// AWS IoT Core Configuration
-// Replace with your IoT Core endpoint (from Terraform output)
-const char* aws_iot_endpoint = "YOUR_IOT_ENDPOINT.iot.us-east-1.amazonaws.com";
+// Use values from config.h
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
+const char* aws_iot_endpoint = AWS_IOT_ENDPOINT;
 const int aws_iot_port = 8883;
-
-// Device Information
-const char* deviceId = "esp32-01";
-const float sensorLat = 43.467;  // Update with actual sensor location
-const float sensorLng = -79.699; // Update with actual sensor location
+const char* deviceId = DEVICE_ID;
+const float sensorLat = SENSOR_LAT;
+const float sensorLng = SENSOR_LNG;
 
 // MQTT Topic
 const char* mqtt_topic = "wildfire/sensors/esp32-01";

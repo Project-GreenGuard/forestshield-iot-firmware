@@ -29,25 +29,32 @@ Required libraries (install via Arduino Library Manager):
 
 ### 2. Configure Firmware
 
-Edit `esp32_wildfire_sensor.ino`:
+**Create configuration file:**
+
+```bash
+cp config.h.example config.h
+```
+
+Edit `config.h` with your values:
 
 1. **WiFi Credentials**
    ```cpp
-   const char* ssid = "YOUR_WIFI_SSID";
-   const char* password = "YOUR_WIFI_PASSWORD";
+   const char* WIFI_SSID = "YOUR_WIFI_SSID";
+   const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
    ```
 
 2. **AWS IoT Core**
    - Get endpoint from `forestshield-infrastructure` Terraform output
-   - Download device certificate and private key from AWS IoT Core
-   - Update `aws_iot_endpoint`, `device_cert`, and `device_key`
+   - Update `AWS_IOT_ENDPOINT` with your IoT Core endpoint
 
 3. **Device Information**
    ```cpp
-   const char* deviceId = "esp32-01";  // Must match IoT Thing name
-   const float sensorLat = 43.467;     // Your GPS coordinates
-   const float sensorLng = -79.699;
+   const char* DEVICE_ID = "esp32-01";  // Must match IoT Thing name
+   const float SENSOR_LAT = 43.467;     // Your GPS coordinates
+   const float SENSOR_LNG = -79.699;
    ```
+
+**Note:** `config.h` is in `.gitignore` and will not be committed. Share the IoT endpoint with team members separately.
 
 ### 3. Upload to ESP32
 
