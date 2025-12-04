@@ -22,6 +22,7 @@ This repository contains the Arduino firmware for ESP32 devices that collect env
 ### 1. Install Arduino Libraries
 
 Required libraries (install via Arduino Library Manager):
+
 - **ArduinoJson** by Benoit Blanchon (v6.x+)
 - **DHT sensor library** by Adafruit
 - **Adafruit Unified Sensor** (dependency)
@@ -38,12 +39,14 @@ cp config.h.example config.h
 Edit `config.h` with your values:
 
 1. **WiFi Credentials**
+
    ```cpp
    const char* WIFI_SSID = "YOUR_WIFI_SSID";
    const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
    ```
 
 2. **AWS IoT Core**
+
    - Get endpoint from `forestshield-infrastructure` Terraform output
    - Update `AWS_IOT_ENDPOINT` with your IoT Core endpoint
 
@@ -65,6 +68,7 @@ Edit `config.h` with your values:
 ## Testing
 
 Monitor serial output at 115200 baud to verify:
+
 - WiFi connection
 - AWS IoT Core connection
 - Sensor readings
@@ -73,6 +77,7 @@ Monitor serial output at 115200 baud to verify:
 ## Mock Sensor
 
 For testing without hardware:
+
 ```bash
 python mock_sensor.py
 ```
@@ -82,6 +87,8 @@ python mock_sensor.py
 Publishes to: `wildfire/sensors/{deviceId}`
 
 ## Payload Format
+
+The sensor sends the following JSON payload to AWS IoT Core:
 
 ```json
 {
@@ -93,6 +100,31 @@ Publishes to: `wildfire/sensors/{deviceId}`
   "timestamp": "2025-12-01T16:20:00Z"
 }
 ```
+
+### Data Fields
+
+- **deviceId**: Unique identifier for the sensor (matches IoT Thing name)
+- **temperature**: Temperature reading from DHT11 sensor (°C, rounded to 1 decimal)
+- **humidity**: Humidity reading from DHT11 sensor (%, rounded to 1 decimal)
+- **lat**: Sensor latitude coordinate (from `config.h`)
+- **lng**: Sensor longitude coordinate (from `config.h`)
+- **timestamp**: UTC timestamp in ISO 8601 format
+
+### Data Processing
+
+After the sensor sends this data, the backend Lambda function (`wildfire-process-sensor-data`) enriches it by:
+
+1. Fetching active wildfire data from NASA FIRMS API
+2. Calculating distance to nearest fire
+3. Computing risk score based on temperature, humidity, and fire proximity
+4. Storing enriched data in DynamoDB
+
+The enriched data stored in DynamoDB includes:
+
+- All original sensor data
+- `riskScore`: Calculated risk (0-100)
+- `nearestFireDistance`: Distance to nearest fire in km
+- `nearestFireData`: JSON data about the nearest fire
 
 ## Related Repositories
 
