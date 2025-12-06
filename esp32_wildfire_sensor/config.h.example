@@ -1,0 +1,35 @@
+// Configuration file for ESP32 Wildfire Sensor
+// Copy this file to config.h and fill in your values
+// config.h is in .gitignore and will not be committed
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// WiFi credentials
+const char* WIFI_SSID = "YOUR_WIFI_SSID";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+
+// AWS IoT Core Configuration
+const char* AWS_IOT_ENDPOINT = "YOUR_IOT_ENDPOINT.iot.us-east-1.amazonaws.com";
+
+// Device Information
+const char* DEVICE_ID = "esp32-wildfire-sensor-1";  // Must match IoT Thing name
+const float SENSOR_LAT = 43.467;  // Update with actual sensor location
+const float SENSOR_LNG = -79.699; // Update with actual sensor location
+
+// AWS IoT Certificates (DO NOT COMMIT - this file is in .gitignore)
+// Get these from AWS IoT Core after creating a certificate for your device
+// See README.md for instructions on creating certificates
+
+const char* DEVICE_CERT = \
+"-----BEGIN CERTIFICATE-----\n" \
+"REPLACE_WITH_YOUR_DEVICE_CERTIFICATE_FROM_AWS_IOT_CORE\n" \
+"-----END CERTIFICATE-----\n";
+
+const char* DEVICE_KEY = \
+"-----BEGIN RSA PRIVATE KEY-----\n" \
+"REPLACE_WITH_YOUR_PRIVATE_KEY_FROM_AWS_IOT_CORE\n" \
+"-----END RSA PRIVATE KEY-----\n";
+
+#endif
+

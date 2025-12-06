@@ -47,8 +47,8 @@ const char* deviceId = DEVICE_ID;
 const float sensorLat = SENSOR_LAT;
 const float sensorLng = SENSOR_LNG;
 
-// MQTT Topic
-const char* mqtt_topic = "wildfire/sensors/esp32-01";
+// MQTT Topic (uses deviceId from config.h)
+char mqtt_topic[50];
 
 // Timing
 unsigned long lastSendTime = 0;
@@ -77,17 +77,13 @@ const char* root_ca = \
 "y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5y5r5\n" \
 "-----END CERTIFICATE-----\n";
 
-// Device Certificate (replace with your certificate from AWS IoT Core)
-const char* device_cert = \
-"-----BEGIN CERTIFICATE-----\n" \
-"REPLACE_WITH_YOUR_DEVICE_CERTIFICATE\n" \
-"-----END CERTIFICATE-----\n";
+// Device Certificate (loaded from config.h)
+extern const char* DEVICE_CERT;
+const char* device_cert = DEVICE_CERT;
 
-// Device Private Key (replace with your private key from AWS IoT Core)
-const char* device_key = \
-"-----BEGIN RSA PRIVATE KEY-----\n" \
-"REPLACE_WITH_YOUR_PRIVATE_KEY\n" \
-"-----END RSA PRIVATE KEY-----\n";
+// Device Private Key (loaded from config.h)
+extern const char* DEVICE_KEY;
+const char* device_key = DEVICE_KEY;
 
 void setup() {
   Serial.begin(115200);
@@ -117,6 +113,9 @@ void setup() {
   // Configure time (required for AWS IoT Core)
   configTime(0, 0, "pool.ntp.org");
   Serial.println("✓ Time configured");
+  
+  // Build MQTT topic from device ID
+  snprintf(mqtt_topic, sizeof(mqtt_topic), "wildfire/sensors/%s", deviceId);
   
   // Configure AWS IoT Core connection
   net.setCACert(root_ca);
