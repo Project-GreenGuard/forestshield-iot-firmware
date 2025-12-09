@@ -26,7 +26,8 @@ Required libraries (install via Arduino Library Manager):
 - **ArduinoJson** by Benoit Blanchon (v6.x+)
 - **DHT sensor library** by Adafruit
 - **Adafruit Unified Sensor** (dependency)
-- **PubSubClient** by Nick O'Leary (v2.8.x+)
+- **AsyncMQTTClient** by Marvin ROGER (v0.9.0+)
+- **AsyncTCP** by dvarrel (ESP32 version, dependency for AsyncMQTTClient)
 
 ### 2. Configure Firmware
 
