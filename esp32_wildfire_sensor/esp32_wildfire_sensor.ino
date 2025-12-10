@@ -1,41 +1,19 @@
 /*
  * GreenGuard Wildfire Sensor - ESP32 + DHT11
- * 
- * This firmware reads temperature and humidity from DHT11 sensor
- * and publishes data to AWS IoT Core via MQTT over TLS.
- * 
- * Hardware:
- * - ESP32 Dev Module
- * - DHT11 sensor
- * 
- * Wiring:
- * - DHT11 VCC -> ESP32 3V3
- * - DHT11 DATA -> ESP32 GPIO14
- * - DHT11 GND -> ESP32 GND
- * 
- * Requirements:
- * - Install ArduinoJson library
- * - Install DHT sensor library
- * - Install AsyncMQTT_ESP32 library (Library Manager: "AsyncMQTT_ESP32" by Marvin ROGER)
- * - Install AsyncTCP library (dependency, by dvarrel)
- * 
- * AWS IoT Core Setup:
- * 1. Create IoT Thing in AWS IoT Core
- * 2. Download device certificate, private key, and root CA
- * 3. Update certificates and endpoint in config.h
+ * Working version - matches successful Python connection
  */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <AsyncMqttClient.h>
+#include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 #include <time.h>
-#include "config.h"  // Configuration file (not committed to git)
+#include "config.h"
 
 // DHT11 Sensor Configuration
-#define DHTPIN 14         // GPIO pin connected to DHT11 DATA pin
-#define DHTTYPE DHT11     // DHT11 sensor type
+#define DHTPIN 14
+#define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
 // Use values from config.h
@@ -43,20 +21,22 @@ const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWORD;
 const char* aws_iot_endpoint = AWS_IOT_ENDPOINT;
 const int aws_iot_port = 8883;
-const char* deviceId = DEVICE_ID;
+
+// Sensor & Device Info
 const float sensorLat = SENSOR_LAT;
 const float sensorLng = SENSOR_LNG;
 
-// MQTT Topic (uses deviceId from config.h)
-char mqtt_topic[50];
+// Fixed client ID
+char deviceId[64];
+char mqtt_topic[128];
 
 // Timing
 unsigned long lastSendTime = 0;
-const unsigned long sendInterval = 30000; // 30 seconds
+const unsigned long sendInterval = 30000;  // 30 seconds
 
 // WiFi and MQTT clients
 WiFiClientSecure net;
-AsyncMqttClient mqttClient;
+PubSubClient mqttClient(net);
 
 // AWS IoT Core Root CA Certificate
 const char* root_ca = \
@@ -81,169 +61,245 @@ const char* root_ca = \
 "rqXRfboQnoZsG4q5WTP468SQvvG5\n" \
 "-----END CERTIFICATE-----\n";
 
-// Device Certificate (loaded from config.h)
 extern const char* DEVICE_CERT;
 const char* device_cert = DEVICE_CERT;
 
-// Device Private Key (loaded from config.h)
 extern const char* DEVICE_KEY;
 const char* device_key = DEVICE_KEY;
 
-// Forward declarations
 void publishSensorData();
 void connectToMqtt();
 
-void onMqttConnect(bool sessionPresent) {
-  Serial.println("\n✓ Connected to AWS IoT Core!");
-  Serial.print("Session present: ");
-  Serial.println(sessionPresent);
-}
-
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.print("\n✗ Disconnected from AWS IoT Core. Reason: ");
-  Serial.println((uint8_t)reason);
-  
-  if (WiFi.isConnected()) {
-    Serial.println("Reconnecting to MQTT...");
-    connectToMqtt();
-  }
-}
-
-void onMqttPublish(uint16_t packetId) {
-  Serial.println(" - ✓ Published to AWS IoT");
-}
-
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(2000);
   
-  Serial.println("\n=== GreenGuard Wildfire Sensor ===");
-  Serial.println("Initializing...");
+  Serial.println("\n\n========================================");
+  Serial.println("GreenGuard Wildfire Sensor - FIXED");
+  Serial.println("========================================");
   
   // Initialize DHT sensor
   dht.begin();
   Serial.println("✓ DHT11 sensor initialized");
   
   // Connect to WiFi
-  Serial.print("Connecting to WiFi: ");
+  Serial.print("\nConnecting to WiFi: ");
   Serial.println(ssid);
   WiFi.begin(ssid, password);
   
-  while (WiFi.status() != WL_CONNECTED) {
+  int wifi_attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && wifi_attempts < 40) {
     delay(500);
     Serial.print(".");
+    wifi_attempts++;
+  }
+  
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\n✗ WiFi connection FAILED!");
+    Serial.println("Check SSID and password, then restart");
+    while(1) delay(1000);
   }
   
   Serial.println("\n✓ WiFi connected!");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+  Serial.print("Signal strength: ");
+  Serial.print(WiFi.RSSI());
+  Serial.println(" dBm");
   
-  // Configure time (required for AWS IoT Core)
-  configTime(0, 0, "pool.ntp.org");
-  Serial.print("Waiting for time sync...");
+  // CRITICAL: Time sync - required for TLS
+  Serial.println("\n[TIME] Syncing with NTP servers...");
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  
   time_t now = time(nullptr);
-  int timeout = 0;
-  while (now < 1000000000 && timeout < 20) {
+  int time_attempts = 0;
+  while (now < 1672531200 && time_attempts < 60) {  // Wait up to 30 seconds
     delay(500);
     now = time(nullptr);
-    timeout++;
-    Serial.print(".");
+    time_attempts++;
+    if (time_attempts % 10 == 0) Serial.print(".");
   }
   Serial.println();
-  if (now < 1000000000) {
-    Serial.println("✗ Time sync failed - TLS will fail");
-  } else {
-    Serial.print("✓ Time configured: ");
-    Serial.println(now);
+  
+  if (now < 1672531200) {
+    Serial.println("✗ TIME SYNC FAILED!");
+    Serial.println("Without time sync, TLS will fail.");
+    Serial.println("Check your internet connection and restart.");
+    while(1) delay(1000);
   }
   
-  // Build MQTT topic from device ID
-  snprintf(mqtt_topic, sizeof(mqtt_topic), "wildfire/sensors/%s", deviceId);
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  char timeStr[64];
+  strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S UTC", &timeinfo);
+  Serial.print("✓ Time synced: ");
+  Serial.println(timeStr);
   
-  // Configure AWS IoT Core connection
-  Serial.println("Configuring TLS certificates...");
+  // Use FIXED client ID (matching Python script)
+  snprintf(deviceId, sizeof(deviceId), "%s", DEVICE_ID);
+  Serial.print("\n[CONFIG] Client ID: ");
+  Serial.println(deviceId);
+  
+  // Build MQTT topic
+  snprintf(mqtt_topic, sizeof(mqtt_topic), "wildfire/sensors/%s", DEVICE_ID);
+  Serial.print("[CONFIG] Topic: ");
+  Serial.println(mqtt_topic);
+  Serial.print("[CONFIG] Endpoint: ");
+  Serial.println(aws_iot_endpoint);
+  
+  // Configure TLS certificates
+  Serial.println("\n[TLS] Configuring certificates...");
   net.setCACert(root_ca);
   net.setCertificate(device_cert);
   net.setPrivateKey(device_key);
-  net.setTimeout(30);
-  Serial.println("✓ Certificates configured");
+  Serial.println("✓ Certificates loaded");
   
-  // Configure AsyncMQTTClient
-  mqttClient.onConnect(onMqttConnect);
-  mqttClient.onDisconnect(onMqttDisconnect);
-  mqttClient.onPublish(onMqttPublish);
+  // Configure MQTT Client - CRITICAL SETTINGS
   mqttClient.setServer(aws_iot_endpoint, aws_iot_port);
-  mqttClient.setClientId(deviceId);
-  mqttClient.setKeepAlive(30);
-  mqttClient.setCleanSession(true);
-  mqttClient.setSecure(true);
-  mqttClient.setSecureClient(&net);
+  mqttClient.setBufferSize(256);      // Smaller buffer (was 512 or 4096)
+  mqttClient.setKeepAlive(60);        // 60 second keepalive
+  mqttClient.setSocketTimeout(15);    // 15 second timeout
   
-  Serial.print("Connecting to AWS IoT Core: ");
-  Serial.println(aws_iot_endpoint);
-  Serial.print("Port: ");
-  Serial.println(aws_iot_port);
-  Serial.print("Client ID: ");
-  Serial.println(deviceId);
+  Serial.println("✓ MQTT client configured");
+  
+  // Test TLS connection first
+  Serial.println("\n[TEST] Testing TLS handshake...");
+  if (net.connect(aws_iot_endpoint, aws_iot_port)) {
+    Serial.println("✓ TLS handshake successful!");
+    Serial.println("✓ Certificates are valid!");
+    net.stop();
+    delay(1000);
+  } else {
+    Serial.println("✗ TLS handshake FAILED!");
+    Serial.println("Check certificates in config.h");
+    while(1) delay(1000);
+  }
+  
+  Serial.println("\n========================================");
+  Serial.println("Starting MQTT connection...");
+  Serial.println("========================================\n");
   
   // Connect to MQTT
   connectToMqtt();
-  
-  Serial.println("=== Sensor Ready ===");
-  Serial.print("Device ID: ");
-  Serial.println(deviceId);
-  Serial.print("Location: ");
-  Serial.print(sensorLat, 6);
-  Serial.print(", ");
-  Serial.println(sensorLng, 6);
-  Serial.print("Publishing to: ");
-  Serial.println(mqtt_topic);
-  Serial.println("Reading sensor every 30 seconds...\n");
 }
 
 void loop() {
-  // AsyncMQTTClient handles connection in background
-  // Just publish sensor data at intervals
-  unsigned long currentTime = millis();
+  // Reconnect if disconnected
+  if (!mqttClient.connected()) {
+    Serial.println("\n[WARNING] MQTT disconnected!");
+    connectToMqtt();
+  }
   
+  // Process MQTT messages
+  mqttClient.loop();
+
+  // Publish sensor data every 30 seconds
+  unsigned long currentTime = millis();
   if (currentTime - lastSendTime >= sendInterval) {
     lastSendTime = currentTime;
     publishSensorData();
   }
-  
-  delay(100); // Small delay to prevent watchdog issues
 }
 
 void connectToMqtt() {
-  Serial.print("Connecting to MQTT...");
-  mqttClient.connect();
+  int retries = 0;
+  const int MAX_RETRIES = 5;
+  
+  while (!mqttClient.connected() && retries < MAX_RETRIES) {
+    Serial.printf("\n[MQTT] Connection attempt %d/%d\n", retries + 1, MAX_RETRIES);
+    Serial.print("       Connecting to: ");
+    Serial.println(aws_iot_endpoint);
+    Serial.print("       Client ID: ");
+    Serial.println(deviceId);
+    
+    // Attempt connection with clean session
+    bool connected = mqttClient.connect(deviceId);
+    
+    if (connected) {
+      Serial.println("\n╔════════════════════════════════════════╗");
+      Serial.println("║   ✓ CONNECTED TO AWS IOT CORE!        ║");
+      Serial.println("╚════════════════════════════════════════╝\n");
+      Serial.println("[INFO] Sensor will publish every 30 seconds\n");
+      return;
+    } else {
+      int state = mqttClient.state();
+      Serial.print("✗ Connection FAILED - Error code: ");
+      Serial.println(state);
+      
+      switch(state) {
+        case -4:
+          Serial.println("  Error: MQTT_CONNECTION_TIMEOUT");
+          Serial.println("  → Check: Time sync, Policy attached, Endpoint");
+          break;
+        case -3:
+          Serial.println("  Error: MQTT_CONNECTION_LOST");
+          break;
+        case -2:
+          Serial.println("  Error: MQTT_CONNECT_FAILED");
+          Serial.println("  → Network issue or wrong endpoint");
+          break;
+        case -1:
+          Serial.println("  Error: MQTT_DISCONNECTED");
+          break;
+        case 1:
+          Serial.println("  Error: MQTT_CONNECT_BAD_PROTOCOL");
+          break;
+        case 2:
+          Serial.println("  Error: MQTT_CONNECT_BAD_CLIENT_ID");
+          break;
+        case 3:
+          Serial.println("  Error: MQTT_CONNECT_UNAVAILABLE");
+          break;
+        case 4:
+          Serial.println("  Error: MQTT_CONNECT_BAD_CREDENTIALS");
+          Serial.println("  → Check certificate and key match");
+          break;
+        case 5:
+          Serial.println("  Error: MQTT_CONNECT_UNAUTHORIZED");
+          Serial.println("  → Check policy is attached to certificate!");
+          break;
+        default:
+          Serial.println("  Unknown error");
+      }
+      
+      retries++;
+      if (retries < MAX_RETRIES) {
+        Serial.println("\n  Retrying in 5 seconds...");
+        delay(5000);
+      }
+    }
+  }
+  
+  if (!mqttClient.connected()) {
+    Serial.println("\n✗✗✗ FAILED TO CONNECT AFTER ALL RETRIES ✗✗✗");
+    Serial.println("\nDid you:");
+    Serial.println("  1. Attach policy to certificate in AWS IoT Console?");
+    Serial.println("  2. Activate the certificate?");
+    Serial.println("  3. Use matching certificate and private key?");
+    Serial.println("\nWill retry in 30 seconds...\n");
+    delay(30000);
+  }
 }
 
 void publishSensorData() {
-  // Read temperature and humidity
+  // Read sensor
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
   
-  // Check if readings are valid
   if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("✗ Failed to read from DHT11 sensor!");
+    Serial.println("\n[ERROR] Failed to read from DHT11 sensor!");
+    Serial.println("        Check sensor wiring:");
+    Serial.println("        - VCC to 3.3V or 5V");
+    Serial.println("        - GND to GND");
+    Serial.println("        - DATA to GPIO 14");
     return;
   }
   
-  // Round to 1 decimal place
+  // Round to 1 decimal
   temperature = round(temperature * 10.0) / 10.0;
   humidity = round(humidity * 10.0) / 10.0;
   
-  // Always print sensor readings to Serial (for debugging)
-  Serial.print("[SENSOR] ");
-  Serial.print(deviceId);
-  Serial.print(" - Temperature: ");
-  Serial.print(temperature, 1);
-  Serial.print("°C, Humidity: ");
-  Serial.print(humidity, 1);
-  Serial.print("% RH");
-  
-  // Get current timestamp
+  // Get timestamp
   time_t now = time(nullptr);
   struct tm timeinfo;
   gmtime_r(&now, &timeinfo);
@@ -251,27 +307,33 @@ void publishSensorData() {
   strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
   
   // Create JSON payload
-  StaticJsonDocument<300> doc;
-  doc["deviceId"] = deviceId;
+  StaticJsonDocument<256> doc;  // Smaller doc size
+  doc["deviceId"] = DEVICE_ID;
   doc["temperature"] = temperature;
   doc["humidity"] = humidity;
   doc["lat"] = sensorLat;
   doc["lng"] = sensorLng;
   doc["timestamp"] = timestamp;
   
-  String jsonString;
-  serializeJson(doc, jsonString);
+  char jsonBuffer[256];
+  serializeJson(doc, jsonBuffer);
   
-  // Publish to MQTT (only if connected)
-  if (mqttClient.connected()) {
-    uint16_t packetId = mqttClient.publish(mqtt_topic, 0, false, jsonString.c_str());
-    if (packetId == 0) {
-      Serial.println(" - ✗ MQTT publish failed");
-    }
-    // onMqttPublish callback will print success message
+  // Print to serial
+  Serial.println("\n┌─────────────────────────────────────┐");
+  Serial.printf("│ Temperature: %5.1f°C               │\n", temperature);
+  Serial.printf("│ Humidity:    %5.1f%%                │\n", humidity);
+  Serial.println("└─────────────────────────────────────┘");
+  Serial.print("[PUBLISH] ");
+  Serial.println(jsonBuffer);
+  
+  // Publish to AWS IoT
+  bool published = mqttClient.publish(mqtt_topic, jsonBuffer, false);
+  
+  if (published) {
+    Serial.println("✓ Published successfully to AWS IoT Core!\n");
   } else {
-    Serial.println(" - ✗ Not connected to AWS IoT (MQTT connection failed)");
-    // Try to reconnect
-    connectToMqtt();
+    Serial.println("✗ Publish FAILED!");
+    Serial.print("  MQTT State: ");
+    Serial.println(mqttClient.state());
   }
 }
