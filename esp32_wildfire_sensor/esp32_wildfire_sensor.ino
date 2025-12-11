@@ -12,7 +12,7 @@
 #include "config.h"
 
 // DHT11 Sensor Configuration
-#define DHTPIN 14
+#define DHTPIN 15  // GPIO 15 (D15) - matches your wiring
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -79,7 +79,30 @@ void setup() {
   Serial.println("========================================");
   
   // Initialize DHT sensor
+  // Initialize DHT11 sensor with delay for stabilization
   dht.begin();
+  delay(2000);  // Give DHT11 time to stabilize (2 seconds)
+  
+  // Test sensor reading
+  Serial.println("[SENSOR] Testing DHT11 sensor...");
+  float testTemp = dht.readTemperature();
+  float testHum = dht.readHumidity();
+  
+  if (isnan(testTemp) || isnan(testHum)) {
+    Serial.println("[ERROR] DHT11 sensor not responding!");
+    Serial.println("        Troubleshooting:");
+    Serial.println("        1. Check wiring: VCC→3.3V, GND→GND, DATA→GPIO14");
+    Serial.println("        2. Add 4.7kΩ-10kΩ pull-up resistor: DATA to VCC");
+    Serial.println("        3. Ensure sensor is powered (check VCC connection)");
+    Serial.println("        4. Try different GPIO pin if GPIO14 is problematic");
+    Serial.println("        Continuing anyway - sensor may work after warm-up...");
+  } else {
+    Serial.print("[SENSOR] ✓ Sensor working! Test reading: ");
+    Serial.print(testTemp, 1);
+    Serial.print("°C, ");
+    Serial.print(testHum, 1);
+    Serial.println("% RH");
+  }
   Serial.println("✓ DHT11 sensor initialized");
   
   // Connect to WiFi
@@ -282,16 +305,35 @@ void connectToMqtt() {
 }
 
 void publishSensorData() {
-  // Read sensor
-  float temperature = dht.readTemperature();
-  float humidity = dht.readHumidity();
+  // Read sensor with retry (DHT11 can be finicky)
+  float temperature = NAN;
+  float humidity = NAN;
+  int retries = 0;
+  const int maxRetries = 3;
+  
+  while ((isnan(temperature) || isnan(humidity)) && retries < maxRetries) {
+    delay(2000);  // DHT11 needs 2 seconds between readings
+    temperature = dht.readTemperature();
+    humidity = dht.readHumidity();
+    retries++;
+    
+    if (isnan(temperature) || isnan(humidity)) {
+      Serial.print("[SENSOR] Read attempt ");
+      Serial.print(retries);
+      Serial.print("/");
+      Serial.print(maxRetries);
+      Serial.println(" failed, retrying...");
+    }
+  }
   
   if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("\n[ERROR] Failed to read from DHT11 sensor!");
-    Serial.println("        Check sensor wiring:");
-    Serial.println("        - VCC to 3.3V or 5V");
-    Serial.println("        - GND to GND");
-    Serial.println("        - DATA to GPIO 14");
+    Serial.println("\n[ERROR] Failed to read from DHT11 sensor after retries!");
+    Serial.println("        Troubleshooting:");
+    Serial.println("        1. Check wiring: VCC→3.3V, GND→GND, DATA→GPIO15 (D15)");
+    Serial.println("        2. Add 4.7kΩ-10kΩ pull-up resistor: DATA to VCC");
+    Serial.println("        3. Ensure sensor is powered (check VCC connection)");
+    Serial.println("        4. GPIO15 may need pull-up resistor (some ESP32 boards)");
+    Serial.println("        5. Sensor may need more time to stabilize");
     return;
   }
   
