@@ -12,10 +12,12 @@ const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 // AWS IoT Core Configuration
 const char* AWS_IOT_ENDPOINT = "YOUR_IOT_ENDPOINT.iot.us-east-1.amazonaws.com";
 
+//Google api key 
+const char* GOOGLE_GEO_API_KEY = "ENTER_API_KEY"
+
 // Device Information
 const char* DEVICE_ID = "esp32-wildfire-sensor-1";  // Must match IoT Thing name
-const float SENSOR_LAT = 43.467;  // Update with actual sensor location
-const float SENSOR_LNG = -79.699; // Update with actual sensor location
+
 
 // AWS IoT Certificates (DO NOT COMMIT - this file is in .gitignore)
 // Get these from AWS IoT Core after creating a certificate for your device
