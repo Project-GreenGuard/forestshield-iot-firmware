@@ -27,7 +27,10 @@ def send_sensor_data():
         response = requests.post(API_URL, json=payload)
         if response.status_code == 200:
             result = response.json()
-            print(f"✓ Sent: {temp}°C, {humidity}% RH | Risk Score: {result.get('data', {}).get('riskScore', 'N/A')}")
+            risk_score = result.get('riskScore', 'N/A')
+            risk_level = result.get('riskLevel', 'N/A')
+            spread_rate = result.get('spreadRateKmh', 'N/A')
+            print(f"✓ Sent: {temp}°C, {humidity}% RH | Risk Score: {risk_score} | Risk Level: {risk_level} | Spread: {spread_rate} km/h")
         else:
             print(f"✗ Error: {response.status_code} - {response.text}")
     except Exception as e:
