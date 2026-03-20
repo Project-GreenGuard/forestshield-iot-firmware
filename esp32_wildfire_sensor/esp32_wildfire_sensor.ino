@@ -1,7 +1,31 @@
 /*
  * GreenGuard Wildfire Sensor - ESP32 + DHT11
  * Working version - matches successful Python connection
+ * 
+ *This firmware reads temperature and humidity from DHT11 sensor
+ * and publishes data to AWS IoT Core via MQTT over TLS.
+ * 
+ * Hardware:
+ * - ESP32 Dev Module
+ * - DHT11 sensor
+ * 
+ * Wiring:
+ * - DHT11 VCC -> ESP32 3V3
+ * - DHT11 DATA -> ESP32 GPIO14
+ * - DHT11 GND -> ESP32 GND
+ * 
+ * Requirements:
+ * - Install ArduinoJson library
+ * - Install DHT sensor library
+ * - Install AsyncMQTT_ESP32 library (Library Manager: "AsyncMQTT_ESP32" by Marvin ROGER)
+ * - Install AsyncTCP library (dependency, by dvarrel)
+ * 
+ * AWS IoT Core Setup:
+ * 1. Create IoT Thing in AWS IoT Core
+ * 2. Download device certificate, private key, and root CA
+ * 3. Update certificates and endpoint in config.h
  */
+ 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
