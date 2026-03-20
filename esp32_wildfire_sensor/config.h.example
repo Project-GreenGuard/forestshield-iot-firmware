@@ -13,7 +13,7 @@ const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* AWS_IOT_ENDPOINT = "YOUR_IOT_ENDPOINT.iot.us-east-1.amazonaws.com";
 
 //Google api key 
-const char* GOOGLE_GEO_API_KEY = "ENTER_API_KEY"
+const char* GOOGLE_GEO_API_KEY = "ENTER_API_KEY";
 
 // Device Information
 const char* DEVICE_ID = "esp32-wildfire-sensor-1";  // Must match IoT Thing name
