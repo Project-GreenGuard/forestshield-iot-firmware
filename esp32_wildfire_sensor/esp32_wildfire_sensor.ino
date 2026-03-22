@@ -254,7 +254,8 @@ void setup() {
   Serial.println("Certificates loaded");
 
   mqttClient.setServer(aws_iot_endpoint, aws_iot_port);
-  mqttClient.setBufferSize(256);
+  /* 512 bytes: headroom for slightly larger JSON (e.g. extra fields) and MQTT overhead */
+  mqttClient.setBufferSize(512);
   mqttClient.setKeepAlive(60);
   mqttClient.setSocketTimeout(15);
 
