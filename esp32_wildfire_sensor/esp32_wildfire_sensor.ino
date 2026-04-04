@@ -51,7 +51,7 @@ const int aws_iot_port = 8883;
 float sensorLat = 0.0;
 float sensorLng = 0.0;
 
-// Fixed client ID
+// Unique client ID and topic
 char deviceId[64];
 char mqtt_topic[128];
 
@@ -215,8 +215,8 @@ void setup() {
   while (now < 1672531200 && time_attempts < 60) {
     delay(500);
     now = time(nullptr);
-    time_attempts++;
     if (time_attempts % 10 == 0) Serial.print(".");
+    time_attempts++;
   }
 
   if (now < 1672531200) {
@@ -234,12 +234,18 @@ void setup() {
   if (getLocationFromWiFi(sensorLat, sensorLng)) {
     Serial.printf("Location acquired: %.6f, %.6f\n", sensorLat, sensorLng);
   } else {
+    Serial.println("[GEO] ✗ Could not get location. Defaulting to 0.0, 0.0");
     Serial.println("[GEO] Could not get location. Defaulting to 0.0, 0.0");
     Serial.println("[GEO] Set GOOGLE_GEO_API_KEY in config.h if needed.");
     sensorLat = 0.0;
     sensorLng = 0.0;
   }
 
+  // ── Generate UNIQUE device ID using MAC address ──────────────
+  String mac = WiFi.macAddress();
+  mac.replace(":", "");  // remove colons
+  snprintf(deviceId, sizeof(deviceId), "esp32-%s", mac.c_str());
+  snprintf(mqtt_topic, sizeof(mqtt_topic), "wildfire/sensors/%s", deviceId);
   snprintf(deviceId,   sizeof(deviceId),   "%s", DEVICE_ID);
   snprintf(mqtt_topic, sizeof(mqtt_topic),  "wildfire/sensors/%s", DEVICE_ID);
 
@@ -371,7 +377,7 @@ void publishSensorData() {
   strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
   StaticJsonDocument<256> doc;
-  doc["deviceId"]    = DEVICE_ID;
+  doc["deviceId"]    = deviceId;
   doc["temperature"] = temperature;
   doc["humidity"]    = humidity;
   doc["lat"]         = sensorLat;
