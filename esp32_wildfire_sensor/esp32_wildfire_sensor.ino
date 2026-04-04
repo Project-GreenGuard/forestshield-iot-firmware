@@ -26,7 +26,7 @@ const int aws_iot_port = 8883;
 float sensorLat = 0.0;
 float sensorLng = 0.0;
 
-// Fixed client ID
+// Unique client ID and topic
 char deviceId[64];
 char mqtt_topic[128];
 
@@ -83,9 +83,6 @@ bool getLocationFromWiFi(float &lat, float &lng) {
 
   Serial.printf("[GEO] Found %d networks\n", networkCount);
 
-  // Build JSON payload
-  // Each AP entry: {"macAddress":"xx:xx:xx:xx:xx:xx","signalStrength":-70}
-  // Google allows up to ~25 APs; we cap at 20 to stay within ArduinoJson limits
   int apCount = min(networkCount, 20);
 
   DynamicJsonDocument reqDoc(2048);
@@ -100,10 +97,8 @@ bool getLocationFromWiFi(float &lat, float &lng) {
   String requestBody;
   serializeJson(reqDoc, requestBody);
 
-  // Free scan results
   WiFi.scanDelete();
 
-  // POST to Google Geolocation API
   String url = String("https://www.googleapis.com/geolocation/v1/geolocate?key=") + GOOGLE_GEO_API_KEY;
 
   HTTPClient http;
@@ -192,8 +187,8 @@ void setup() {
   while (now < 1672531200 && time_attempts < 60) {
     delay(500);
     now = time(nullptr);
-    time_attempts++;
     if (time_attempts % 10 == 0) Serial.print(".");
+    time_attempts++;
   }
 
   if (now < 1672531200) {
@@ -213,14 +208,15 @@ void setup() {
     Serial.printf("✓ Location acquired: %.6f, %.6f\n", sensorLat, sensorLng);
   } else {
     Serial.println("[GEO] ✗ Could not get location. Defaulting to 0.0, 0.0");
-    Serial.println("[GEO]   Add GOOGLE_GEO_API_KEY to config.h if you haven't.");
     sensorLat = 0.0;
     sensorLng = 0.0;
   }
 
-  // MQTT config
-  snprintf(deviceId,   sizeof(deviceId),   "%s", DEVICE_ID);
-  snprintf(mqtt_topic, sizeof(mqtt_topic),  "wildfire/sensors/%s", DEVICE_ID);
+  // ── Generate UNIQUE device ID using MAC address ──────────────
+  String mac = WiFi.macAddress();
+  mac.replace(":", "");  // remove colons
+  snprintf(deviceId, sizeof(deviceId), "esp32-%s", mac.c_str());
+  snprintf(mqtt_topic, sizeof(mqtt_topic), "wildfire/sensors/%s", deviceId);
 
   Serial.printf("\n[CONFIG] Client ID: %s\n", deviceId);
   Serial.printf("[CONFIG] Topic:     %s\n", mqtt_topic);
@@ -355,7 +351,7 @@ void publishSensorData() {
   strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
   StaticJsonDocument<256> doc;
-  doc["deviceId"]    = DEVICE_ID;
+  doc["deviceId"]    = deviceId;
   doc["temperature"] = temperature;
   doc["humidity"]    = humidity;
   doc["lat"]         = sensorLat;
