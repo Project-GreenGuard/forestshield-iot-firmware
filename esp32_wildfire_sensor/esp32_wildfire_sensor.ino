@@ -1,6 +1,6 @@
 /*
  * GreenGuard Wildfire Sensor - ESP32 + DHT11
- * WITH Photo Simulation Feature
+ * Working version - matches successful Python connection
  */
 
 #include <WiFi.h>
@@ -13,7 +13,7 @@
 #include "config.h"
 
 // DHT11 Sensor Configuration
-#define DHTPIN 15
+#define DHTPIN 15  // GPIO 15 (D15)
 #define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -34,17 +34,6 @@ char mqtt_topic[128];
 // Timing
 unsigned long lastSendTime = 0;
 const unsigned long sendInterval = 30000;
-
-// ── Photo Simulation ──────────────────────────
-const char* photoUrls[] = {
-  "https://cdn.britannica.com/42/188142-050-4D4D9D19/wildfire-Stanislaus-National-Forest-California-2013.jpg",
-  "https://www.metroparks.net/wp-content/uploads/2017/06/1080p_HBK_autumn-morning_GI-1024x686.jpg"
-};
-
-const int numPhotos = sizeof(photoUrls) / sizeof(photoUrls[0]);
-
-unsigned long lastPhotoTime = 0;
-const unsigned long photoCooldown = 10 * 60 * 1000; // 10 minutes
 
 // WiFi and MQTT clients
 WiFiClientSecure net;
@@ -117,32 +106,106 @@ void setup() {
   delay(2000);
 
   dht.begin();
+  delay(2000);
 
+  Serial.println("[SENSOR] Testing DHT11 sensor...");
+  float testTemp = dht.readTemperature();
+  float testHum  = dht.readHumidity();
+
+  if (isnan(testTemp) || isnan(testHum)) {
+    Serial.println("[ERROR] DHT11 sensor not responding! Continuing anyway...");
+  } else {
+    Serial.printf("[SENSOR] ✓ Sensor working! Test reading: %.1f°C, %.1f%% RH\n", testTemp, testHum);
+  }
+
+  // Connect to WiFi
+  Serial.printf("\nConnecting to WiFi: %s\n", ssid);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+    Serial.print(".");
+    wifi_attempts++;
   }
 
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\n✗ WiFi connection FAILED! Restarting...");
+    while (1) delay(1000);
+  }
+
+  Serial.printf("\n✓ WiFi connected! IP: %s  RSSI: %d dBm\n",
+                WiFi.localIP().toString().c_str(), WiFi.RSSI());
+
+  // Time sync (required for TLS)
+  Serial.println("\n[TIME] Syncing with NTP servers...");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 
   time_t now = time(nullptr);
   while (now < 1672531200) {
     delay(500);
     now = time(nullptr);
+    if (time_attempts % 10 == 0) Serial.print(".");
+    time_attempts++;
   }
 
-  getLocationFromWiFi(sensorLat, sensorLng);
+  if (now < 1672531200) {
+    Serial.println("\n✗ TIME SYNC FAILED! Check internet connection.");
+    while (1) delay(1000);
+  }
 
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  char timeStr[64];
+  strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S UTC", &timeinfo);
+  Serial.printf("✓ Time synced: %s\n", timeStr);
+
+  // ── Get location once at startup ──────────────
+  Serial.println("\n[GEO] Getting device location...");
+  if (getLocationFromWiFi(sensorLat, sensorLng)) {
+    Serial.printf("✓ Location acquired: %.6f, %.6f\n", sensorLat, sensorLng);
+  } else {
+    Serial.println("[GEO] ✗ Could not get location. Defaulting to 0.0, 0.0");
+    sensorLat = 0.0;
+    sensorLng = 0.0;
+  }
+
+  // ── Generate UNIQUE device ID using MAC address ──────────────
   String mac = WiFi.macAddress();
   mac.replace(":", "");
   snprintf(deviceId, sizeof(deviceId), "esp32-%s", mac.c_str());
   snprintf(mqtt_topic, sizeof(mqtt_topic), "wildfire/sensors/%s", deviceId);
+  snprintf(deviceId,   sizeof(deviceId),   "%s", DEVICE_ID);
+  snprintf(mqtt_topic, sizeof(mqtt_topic),  "wildfire/sensors/%s", DEVICE_ID);
 
+  Serial.printf("\n[CONFIG] Client ID: %s\n", deviceId);
+  Serial.printf("[CONFIG] Topic:     %s\n", mqtt_topic);
+  Serial.printf("[CONFIG] Endpoint:  %s\n", aws_iot_endpoint);
+
+  // TLS
+  Serial.println("\n[TLS] Configuring certificates...");
   net.setCACert(root_ca);
   net.setCertificate(device_cert);
   net.setPrivateKey(device_key);
+  Serial.println("✓ Certificates loaded");
 
   mqttClient.setServer(aws_iot_endpoint, aws_iot_port);
+  mqttClient.setBufferSize(256);
+  mqttClient.setKeepAlive(60);
+  mqttClient.setSocketTimeout(15);
+
+  // Test TLS
+  Serial.println("\n[TEST] Testing TLS handshake...");
+  if (net.connect(aws_iot_endpoint, aws_iot_port)) {
+    Serial.println("✓ TLS handshake successful!");
+    net.stop();
+    delay(1000);
+  } else {
+    Serial.println("✗ TLS handshake FAILED! Check certificates.");
+    while (1) delay(1000);
+  }
+
+  Serial.println("\n========================================");
+  Serial.println("Starting MQTT connection...");
+  Serial.println("========================================\n");
 
   connectToMqtt();
 
@@ -150,9 +213,6 @@ void setup() {
   randomSeed(micros());
 }
 
-// ──────────────────────────────────────────────
-//  Loop
-// ──────────────────────────────────────────────
 void loop() {
   if (!mqttClient.connected()) {
     connectToMqtt();
@@ -166,24 +226,73 @@ void loop() {
   }
 }
 
-// ──────────────────────────────────────────────
-//  MQTT Connect
-// ──────────────────────────────────────────────
 void connectToMqtt() {
-  while (!mqttClient.connected()) {
-    mqttClient.connect(deviceId);
-    delay(2000);
+  int retries = 0;
+  const int MAX_RETRIES = 5;
+
+  while (!mqttClient.connected() && retries < MAX_RETRIES) {
+    Serial.printf("\n[MQTT] Connection attempt %d/%d\n", retries + 1, MAX_RETRIES);
+
+    if (mqttClient.connect(deviceId)) {
+      Serial.println("\n╔════════════════════════════════════════╗");
+      Serial.println("║   ✓ CONNECTED TO AWS IOT CORE!        ║");
+      Serial.println("╚════════════════════════════════════════╝\n");
+      return;
+    }
+
+    int state = mqttClient.state();
+    Serial.printf("✗ Connection FAILED - Error code: %d\n", state);
+
+    switch (state) {
+      case -4: Serial.println("  MQTT_CONNECTION_TIMEOUT → Check time sync, policy, endpoint"); break;
+      case -3: Serial.println("  MQTT_CONNECTION_LOST"); break;
+      case -2: Serial.println("  MQTT_CONNECT_FAILED → Network issue or wrong endpoint"); break;
+      case -1: Serial.println("  MQTT_DISCONNECTED"); break;
+      case  1: Serial.println("  MQTT_CONNECT_BAD_PROTOCOL"); break;
+      case  2: Serial.println("  MQTT_CONNECT_BAD_CLIENT_ID"); break;
+      case  3: Serial.println("  MQTT_CONNECT_UNAVAILABLE"); break;
+      case  4: Serial.println("  MQTT_CONNECT_BAD_CREDENTIALS → Check cert/key match"); break;
+      case  5: Serial.println("  MQTT_CONNECT_UNAUTHORIZED → Check policy is attached!"); break;
+      default: Serial.println("  Unknown error"); break;
+    }
+
+    retries++;
+    if (retries < MAX_RETRIES) {
+      Serial.println("  Retrying in 5 seconds...");
+      delay(5000);
+    }
+  }
+
+  if (!mqttClient.connected()) {
+    Serial.println("\n✗✗✗ FAILED TO CONNECT AFTER ALL RETRIES ✗✗✗");
+    Serial.println("Will retry in 30 seconds...\n");
+    delay(30000);
   }
 }
 
-// ──────────────────────────────────────────────
-//  Publish sensor data
-// ──────────────────────────────────────────────
 void publishSensorData() {
-  float temperature = dht.readTemperature();
-  float humidity    = dht.readHumidity();
+  float temperature = NAN;
+  float humidity    = NAN;
+  int retries = 0;
+  const int maxRetries = 3;
 
-  if (isnan(temperature) || isnan(humidity)) return;
+  while ((isnan(temperature) || isnan(humidity)) && retries < maxRetries) {
+    delay(2000);
+    temperature = dht.readTemperature();
+    humidity    = dht.readHumidity();
+    retries++;
+    if (isnan(temperature) || isnan(humidity)) {
+      Serial.printf("[SENSOR] Read attempt %d/%d failed, retrying...\n", retries, maxRetries);
+    }
+  }
+
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("\n[ERROR] Failed to read from DHT11 sensor after retries!");
+    return;
+  }
+
+  temperature = round(temperature * 10.0) / 10.0;
+  humidity    = round(humidity    * 10.0) / 10.0;
 
   time_t now = time(nullptr);
   struct tm timeinfo;
@@ -227,5 +336,17 @@ void publishSensorData() {
   char jsonBuffer[384];
   serializeJson(doc, jsonBuffer);
 
-  mqttClient.publish(mqtt_topic, jsonBuffer);
+  Serial.println("\n┌─────────────────────────────────────┐");
+  Serial.printf( "│ Temperature: %5.1f°C               │\n", temperature);
+  Serial.printf( "│ Humidity:    %5.1f%%                │\n", humidity);
+  Serial.printf( "│ Location:    %.4f, %.4f     │\n", sensorLat, sensorLng);
+  Serial.println("└─────────────────────────────────────┘");
+  Serial.printf("[PUBLISH] %s\n", jsonBuffer);
+
+  bool published = mqttClient.publish(mqtt_topic, jsonBuffer, false);
+  if (published) {
+    Serial.println("✓ Published successfully to AWS IoT Core!\n");
+  } else {
+    Serial.printf("✗ Publish FAILED! MQTT State: %d\n", mqttClient.state());
+  }
 }
